@@ -4,7 +4,6 @@ import sympy as sp
 import time
 
 app = Flask(__name__)
-# Enable CORS for all routes and origins
 CORS(app)
 
 @app.route('/', methods=['GET'])
@@ -22,23 +21,21 @@ def factor():
 
         p = int(data.get('p', 3))
         mode = data.get('mode', 'standard')
-        
         x = sp.Symbol('x')
 
         if mode == 'standard':
             c = int(data.get('c', 2200))
-            # Formula: (x + 1)^c - x^c - 1
-            poly_expr = (x + 1)**c - x**c - 1
+            # Memory-efficient expansion over GF(p)
+            poly_obj = (sp.Poly(x + 1, x, domain=sp.GF(p))**c) - (sp.Poly(x, x, domain=sp.GF(p))**c) - sp.Poly(1, x, domain=sp.GF(p))
         else:
             poly_str = data.get('poly', '')
             if not poly_str:
-                return jsonify({"success": False, "error": "Custom polynomial expression is required"}), 400
+                return jsonify({"success": False, "error": "Custom polynomial expression required"}), 400
             poly_expr = sp.sympify(poly_str)
+            poly_obj = sp.Poly(poly_expr, x, domain=sp.GF(p))
 
-        # SymPy Factorization over GF(p)
-        poly_obj = sp.Poly(poly_expr, x, domain=sp.GF(p))
+        # Factorization over GF(p)
         factors_dict = poly_obj.factor_list()
-        
         lead_coeff = str(factors_dict[0])
         raw_factors = factors_dict[1]
 

@@ -1,213 +1,116 @@
-from flask import Flask, request, jsonify, render_template
-import subprocess
-import json
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import sympy as sp
 import time
-import os
+import traceback
 
 app = Flask(__name__)
+
+# Complete CORS configuration for GitHub Pages & Custom Domain
+CORS(
+    app,
+    resources={r"/*": {"origins": "*"}},
+    supports_credentials=True,
+    allow_headers=["Content-Type", "Authorization"],
+    methods=["GET", "POST", "OPTIONS"]
+)
 
 def is_prime(n):
     if n < 2: return False
     if n == 2: return True
     if n % 2 == 0: return False
-    for i in range(3, int(n**0.5)+1, 2):
+    i = 3
+    while i * i <= n:
         if n % i == 0: return False
+        i += 2
     return True
 
-def format_poly(coeffs_str, p):
-    """Format polynomial string"""
-    return coeffs_str
-
-def run_sage_factor(p, c=None, poly_str=None, mode='standard'):
-    """Run SageMath factorization"""
-    
-    if mode == 'standard':
-        sage_code = f"""
-import json
-try:
-    R.<x> = PolynomialRing(GF({p}))
-    f = (x+1)^{c} - x^{c} - 1
-    orig_deg = f.degree()
-    fl = f.factor()
-    result = []
-    for fac, mult in fl:
-        coeffs = list(fac)
-        coeffs_int = [int(c) % {p} for c in coeffs]
-        result.append({{
-            'coeffs': coeffs_int,
-            'degree': int(fac.degree()),
-            'multiplicity': int(mult),
-            'str': str(fac)
-        }})
-    print(json.dumps({{
-        'success': True,
-        'factors': result,
-        'orig_deg': orig_deg
-    }}))
-except Exception as e:
-    print(json.dumps({{'success': False, 'error': str(e)}}))
-"""
-    else:
-        sage_code = f"""
-import json
-try:
-    R.<x> = PolynomialRing(GF({p}))
-    f = R('{poly_str}')
-    orig_deg = f.degree()
-    fl = f.factor()
-    result = []
-    for fac, mult in fl:
-        coeffs = list(fac)
-        coeffs_int = [int(c) % {p} for c in coeffs]
-        result.append({{
-            'coeffs': coeffs_int,
-            'degree': int(fac.degree()),
-            'multiplicity': int(mult),
-            'str': str(fac)
-        }})
-    print(json.dumps({{
-        'success': True,
-        'factors': result,
-        'orig_deg': orig_deg
-    }}))
-except Exception as e:
-    print(json.dumps({{'success': False, 'error': str(e)}}))
-"""
-
-    result = subprocess.run(
-        ['sage', '-c', sage_code],
-        capture_output=True,
-        text=True,
-        timeout=600
-    )
-    
-    if result.returncode != 0 and not result.stdout:
-        return {'success': False, 'error': result.stderr[:500]}
-    
-    # Parse output
-    output = result.stdout.strip()
-    if not output:
-        return {'success': False, 'error': 'No output from Sage'}
-    
-    # Find JSON in output
-    lines = output.split('\n')
-    for line in reversed(lines):
-        line = line.strip()
-        if line.startswith('{'):
-            try:
-                return json.loads(line)
-            except:
-                continue
-    
-    return {'success': False, 'error': 'Could not parse Sage output'}
-
-def format_factor_str(coeffs, p):
-    """Format coefficient list as readable polynomial"""
-    deg = len(coeffs) - 1
-    terms = []
-    for i, c in enumerate(coeffs):
-        c = int(c) % p
-        if c == 0:
-            continue
-        power = deg - i
-        dc = c
-        if p <= 7 and c > p // 2:
-            dc = c - p
-        if power == 0:
-            terms.append(str(dc))
-        elif power == 1:
-            if dc == 1: terms.append('x')
-            elif dc == -1: terms.append('-x')
-            else: terms.append(f'{dc}*x')
-        else:
-            if dc == 1: terms.append(f'x^{power}')
-            elif dc == -1: terms.append(f'-x^{power}')
-            else: terms.append(f'{dc}*x^{power}')
-    if not terms:
-        return '0'
-    result = terms[0]
-    for t in terms[1:]:
-        if t.startswith('-'):
-            result += f' - {t[1:]}'
-        else:
-            result += f' + {t}'
-    return result
-
-@app.route('/')
+@app.route('/', methods=['GET'])
 def home():
-    return render_template('index.html')
+    return jsonify({"status": "Polynomial Factorization API is running"})
 
-@app.route('/factor', methods=['POST'])
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({"status": "ok"})
+
+@app.route('/factor', methods=['POST', 'OPTIONS'])
 def factor():
+    if request.method == 'OPTIONS':
+        return '', 200
+
     try:
-        data = request.get_json()
-        p = int(data.get('p', 3))
-        c = int(data.get('c', 2200))
-        mode = data.get('mode', 'standard')
-        poly_str = data.get('poly', '')
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({"success": False, "error": "No JSON payload provided"}), 400
+
+        mode = data.get("mode", "standard")
+        p = int(data.get("p", 3))
 
         if not is_prime(p):
-            return jsonify({'success': False, 'error': f'{p} is not prime'})
-
-        if mode == 'standard':
-            if c < 2 or c > 500000:
-                return jsonify({'success': False, 'error': 'c must be between 2 and 500000'})
+            return jsonify({"success": False, "error": f"{p} is not prime"}), 400
 
         start = time.time()
+        x = sp.Symbol('x')
 
-        # Run SageMath
-        if mode == 'standard':
-            sage_result = run_sage_factor(p, c=c, mode='standard')
+        if mode == "standard":
+            c = int(data.get("c", 2200))
+            if c < 2 or c > 500000:
+                return jsonify({"success": False, "error": "c must be between 2 and 500000"}), 400
+            
+            # Direct polynomial expansion over GF(p)
+            poly_obj = (sp.Poly(x + 1, x, domain=sp.GF(p))**c) - (sp.Poly(x, x, domain=sp.GF(p))**c) - sp.Poly(1, x, domain=sp.GF(p))
         else:
+            poly_str = data.get("poly", "").strip()
             if not poly_str:
-                return jsonify({'success': False, 'error': 'No polynomial provided'})
-            sage_result = run_sage_factor(p, poly_str=poly_str, mode='custom')
+                return jsonify({"success": False, "error": "No polynomial provided"}), 400
+            poly_str = poly_str.replace("^", "**")
+            poly_expr = sp.sympify(poly_str)
+            poly_obj = sp.Poly(poly_expr, x, domain=sp.GF(p))
 
-        elapsed = round(time.time() - start, 2)
+        orig_deg = poly_obj.degree()
+        if orig_deg < 0:
+            return jsonify({"success": False, "error": "Zero polynomial cannot be factorized"}), 400
 
-        if not sage_result.get('success'):
-            return jsonify({'success': False, 'error': sage_result.get('error', 'Unknown error')})
+        # SymPy Factorization over GF(p)
+        factors_dict = poly_obj.factor_list()
+        lead_coeff = int(factors_dict[0]) % p
+        raw_factors = factors_dict[1]
 
-        factors = sage_result['factors']
-        orig_deg = sage_result.get('orig_deg', 0)
-
-        # Format factors
-        formatted = []
+        factors = []
         sum_degrees = 0
-        for f in factors:
-            deg = f['degree']
-            mult = f['multiplicity']
-            coeffs = f['coeffs']
-            poly_s = format_factor_str(coeffs, p)
-            formatted.append({
-                'coeffs': coeffs,
-                'degree': deg,
-                'multiplicity': mult,
-                'str': poly_s
+
+        for fac, mult in raw_factors:
+            deg = fac.degree()
+            mult = int(mult)
+            coeffs_high = [int(co) % p for co in fac.all_coeffs()]
+            
+            factors.append({
+                "coeffs": coeffs_high,
+                "degree": deg,
+                "multiplicity": mult,
+                "str": str(fac.as_expr())
             })
             sum_degrees += deg * mult
 
-        formatted.sort(key=lambda f: -f['degree'])
+        factors.sort(key=lambda z: -z["degree"])
+        elapsed = round(time.time() - start, 2)
 
         return jsonify({
-            'success': True,
-            'factors': formatted,
-            'count': len(formatted),
-            'lead_coeff': 1,
-            'sum_degrees': sum_degrees,
-            'time': elapsed,
-            'poly_degree': orig_deg
+            "success": True,
+            "factors": factors,
+            "count": len(factors),
+            "lead_coeff": lead_coeff,
+            "sum_degrees": sum_degrees,
+            "time": elapsed,
+            "poly_degree": orig_deg
         })
 
-    except subprocess.TimeoutExpired:
-        return jsonify({'success': False, 'error': 'Timeout — polynomial too large'})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "trace": traceback.format_exc()
+        }), 500
 
-@app.route('/health')
-def health():
-    return jsonify({'status': 'ok'})
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)

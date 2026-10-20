@@ -1,4 +1,4 @@
-Flask
-sympy
+flask
 flask-cors
+sympy
 gunicorn

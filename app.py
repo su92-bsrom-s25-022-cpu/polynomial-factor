@@ -4,14 +4,26 @@ import sympy as sp
 import time
 
 app = Flask(__name__)
-CORS(app)
+
+# Explicitly enable CORS for codcups.com and allow all headers/methods
+CORS(
+    app,
+    resources={r"/*": {"origins": "*"}},
+    supports_credentials=True,
+    allow_headers=["Content-Type", "Authorization"],
+    methods=["GET", "POST", "OPTIONS"]
+)
 
 @app.route('/', methods=['GET'])
 def home():
     return jsonify({"status": "Polynomial Factorization API is running"})
 
-@app.route('/factor', methods=['POST'])
+@app.route('/factor', methods=['POST', 'OPTIONS'])
 def factor():
+    # Handle preflight OPTIONS request
+    if request.method == 'OPTIONS':
+        return '', 200
+
     try:
         start_time = time.time()
         data = request.get_json()
